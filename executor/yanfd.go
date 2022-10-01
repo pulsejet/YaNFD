@@ -46,6 +46,7 @@ type YaNFD struct {
 	blockProfiler  *pprof.Profile
 
 	unixListener *face.UnixStreamListener
+	rnfdListener *face.RNFDStreamListener
 	wsListener   *face.WebSocketListener
 	tcpListeners []*face.TCPListener
 }
@@ -231,6 +232,16 @@ func (y *YaNFD) Start() {
 			go y.unixListener.Run()
 			core.LogInfo("Main", "Created Unix stream listener for ", face.UnixSocketPath)
 		}
+
+		// Set up rNFD stream listener
+		y.rnfdListener, err = face.MakeRNFDStreamListener(ndn.MakeUnixFaceURI(face.UnixSocketPath + ".rnfd"))
+		if err != nil {
+			core.LogError("Main", "Unable to create rNFD stream listener at ", face.UnixSocketPath, ": ", err)
+		} else {
+			faceCnt += 1
+			go y.rnfdListener.Run()
+			core.LogInfo("Main", "Created rNFD stream listener for ", face.UnixSocketPath)
+		}
 	}
 
 	if core.GetConfigBoolDefault("faces.websocket.enabled", true) {
@@ -279,6 +290,10 @@ func (y *YaNFD) Stop() {
 	if y.unixListener != nil {
 		y.unixListener.Close()
 		<-y.unixListener.HasQuit
+	}
+	if y.rnfdListener != nil {
+		y.rnfdListener.Close()
+		<-y.rnfdListener.HasQuit
 	}
 	if y.wsListener != nil {
 		y.wsListener.Close()
