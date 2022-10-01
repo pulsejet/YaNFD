@@ -10,6 +10,7 @@ package face
 import (
 	"net"
 	"strconv"
+	"sync"
 
 	"github.com/named-data/YaNFD/core"
 	"github.com/named-data/YaNFD/ndn"
@@ -20,16 +21,18 @@ import (
 type RNFDStreamTransport struct {
 	remoteAddr string
 	conn       *net.UnixConn
+	mutex      *sync.Mutex
 	transportBase
 }
 
 // MakeRNFDStreamTransport creates a rNFD stream transport.
-func MakeRNFDStreamTransport(remoteURI *ndn.URI, localURI *ndn.URI, conn *net.UnixConn) (*RNFDStreamTransport, error) {
+func MakeRNFDStreamTransport(remoteURI *ndn.URI, localURI *ndn.URI, conn *net.UnixConn, mutex *sync.Mutex) (*RNFDStreamTransport, error) {
 	t := new(RNFDStreamTransport)
 	t.makeTransportBase(remoteURI, localURI, PersistencyPersistent, ndn.Local, ndn.PointToPoint, tlv.MaxNDNPacketSize)
 
 	// Set connection
 	t.conn = conn
+	t.mutex = mutex
 
 	t.changeState(ndn.Up)
 
@@ -60,6 +63,9 @@ func (t *RNFDStreamTransport) GetSendQueueSize() uint64 {
 }
 
 func (t *RNFDStreamTransport) sendFrame(frame []byte) {
+	t.mutex.Lock()
+	defer t.mutex.Unlock()
+
 	if len(frame) > t.MTU() {
 		core.LogWarn(t, "Attempted to send frame larger than MTU - DROP")
 		return

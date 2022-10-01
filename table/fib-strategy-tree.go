@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/named-data/YaNFD/ndn"
+	"github.com/named-data/YaNFD/rnfd"
 )
 
 type fibStrategyTreeEntry struct {
@@ -149,6 +150,8 @@ func (f *FibStrategyTree) FindStrategy(name *ndn.Name) *ndn.Name {
 
 // InsertNextHop adds or updates a nexthop entry for the specified prefix.
 func (f *FibStrategyTree) InsertNextHop(name *ndn.Name, nexthop uint64, cost uint64) {
+	rnfd.InsertNextHop(name, nexthop, cost)
+
 	f.fibStrategyRWMutex.Lock()
 	entry := f.fillTreeToPrefix(name)
 	if entry.name == nil {

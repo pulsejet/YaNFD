@@ -8,14 +8,17 @@
 package face
 
 import (
+	"errors"
 	"net"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/named-data/YaNFD/core"
 	"github.com/named-data/YaNFD/ndn"
 	"github.com/named-data/YaNFD/ndn/tlv"
+	"github.com/named-data/YaNFD/rnfd"
 )
 
 // RNFDStreamListener listens for incoming Unix stream connections.
@@ -37,6 +40,7 @@ func MakeRNFDStreamListener(localURI *ndn.URI) (*RNFDStreamListener, error) {
 	l.localURI = localURI
 	l.HasQuit = make(chan bool, 1)
 	l.transportMap = make(map[string]*RNFDStreamTransport)
+	rnfd.RnfdMgmtChan = make(chan interface{}, 100)
 	return l, nil
 }
 
@@ -86,9 +90,74 @@ func (l *RNFDStreamListener) Close() {
 	l.conn.Close()
 }
 
+func (l *RNFDStreamListener) processMgmtFrame(obj interface{}) ([]byte, error) {
+	if obj == nil {
+		return nil, errors.New("nil object")
+	}
+
+	switch obj.(type) {
+	case *rnfd.InsertNextHopMsg:
+		msg := obj.(*rnfd.InsertNextHopMsg)
+		uri := FaceTable.Faces[msg.FaceID].RemoteURI()
+		if uri.Scheme() != "udp4" {
+			return nil, errors.New("invalid scheme")
+		}
+		// remove udp4:// from start
+		remoteAddr := uri.String()[7:]
+
+		b := tlv.NewEmptyBlock(1)                     // InsertNextHop
+		b.Append(msg.Name.Encode())                   // Name
+		b.Append(tlv.NewBlock(4, []byte(remoteAddr))) // UDP address
+		b.Append(tlv.EncodeNNIBlock(5, msg.Cost))     // Cost
+		b.Encode()
+		return b.Wire()
+	}
+
+	return nil, errors.New("unknown message type")
+}
+
 // Accept connection and run receive thread
 func (l *RNFDStreamListener) runReceive(conn *net.UnixConn) {
 	core.LogTrace(l, "Starting receive thread")
+
+	// Channel to quit writer
+	quitChan := make(chan bool, 1)
+	mutex := sync.Mutex{}
+
+	// Read rnfdMgmtChan
+	// WARN: only one connection can be active at a time
+	go func() {
+		core.LogInfo(l, "Starting rnfdMgmtChan thread")
+		for {
+			select {
+			case frame := <-rnfd.RnfdMgmtChan:
+				mutex.Lock()
+
+				// Proess frame
+				encodedFrame, err := l.processMgmtFrame(frame)
+				if err != nil {
+					core.LogWarn(l, "Unable to process frame: ", err)
+					continue
+				}
+				b := tlv.NewBlock(3, encodedFrame)
+				b.Encode()
+				w, err := b.Wire()
+				if err != nil {
+					core.LogWarn(l, "Unable to encode TLV block: ", err)
+					continue
+				}
+				_, err = conn.Write(w)
+				if err != nil {
+					core.LogWarn(l, "Unable to write to rNFD: ", err)
+					return
+				}
+				core.LogInfo(l, "Wrote ", len(w), " mgmt bytes to rNFD")
+				mutex.Unlock()
+			case <-quitChan:
+				return
+			}
+		}
+	}()
 
 	recvBuf := make([]byte, tlv.MaxNDNPacketSize*2)
 	startPos := 0
@@ -123,7 +192,7 @@ func (l *RNFDStreamListener) runReceive(conn *net.UnixConn) {
 			} else if startPos >= tlvPos+tlvSize {
 				// Packet was successfully received, send up to link service
 				frame := recvBuf[tlvPos : tlvPos+tlvSize]
-				l.processFrame(frame, conn)
+				l.processFrame(frame, conn, &mutex)
 				tlvPos += tlvSize
 			} else {
 				if tlvPos > 0 {
@@ -140,10 +209,14 @@ func (l *RNFDStreamListener) runReceive(conn *net.UnixConn) {
 			}
 		}
 	}
+
+	// Close connection
+	quitChan <- true
+	conn.Close()
 }
 
 // Process frame received from rNFD
-func (l *RNFDStreamListener) processFrame(frame []byte, conn *net.UnixConn) {
+func (l *RNFDStreamListener) processFrame(frame []byte, conn *net.UnixConn, mutex *sync.Mutex) {
 	// Decode TLV block
 	tlvBlock, _, err := tlv.DecodeBlock(frame)
 	if err != nil {
@@ -164,7 +237,7 @@ func (l *RNFDStreamListener) processFrame(frame []byte, conn *net.UnixConn) {
 		case 4:
 			// UDP address
 			udpAddr = string(subElem.Value())
-			l.createTransport(udpAddr, conn)
+			l.createTransport(udpAddr, conn, mutex)
 		case 21:
 			// NDN packet
 			packet := subElem.Value()
@@ -176,7 +249,7 @@ func (l *RNFDStreamListener) processFrame(frame []byte, conn *net.UnixConn) {
 }
 
 // Create transport for UDP address
-func (l *RNFDStreamListener) createTransport(remoteAddr string, conn *net.UnixConn) {
+func (l *RNFDStreamListener) createTransport(remoteAddr string, conn *net.UnixConn, mutex *sync.Mutex) {
 	// Check if transport already exists
 	if _, ok := l.transportMap[remoteAddr]; ok {
 		return
@@ -202,7 +275,7 @@ func (l *RNFDStreamListener) createTransport(remoteAddr string, conn *net.UnixCo
 	}
 
 	// Create transport
-	transport, err := MakeRNFDStreamTransport(remoteURI, l.localURI, conn)
+	transport, err := MakeRNFDStreamTransport(remoteURI, l.localURI, conn, mutex)
 	if err != nil {
 		core.LogWarn(l, "Unable to create transport: ", err)
 		return
