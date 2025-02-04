@@ -24,6 +24,20 @@ jobs:
       - name: Run benchmark
         run: go test ./... -benchmem -bench ^Benchmark -benchtime=150000x | tee bench.log
 
+      - name: Check benchmark result
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: Go Benchmark
+          tool: go
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          output-file-path: bench.log
+          alert-threshold: '200%'
+          comment-on-alert: true
+          comment-always: true
+          fail-on-alert: true
+          summary-always: true
+          alert-comment-cc-users: '@pulsejet'
+
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1
         if: github.event_name != 'pull_request'
@@ -33,8 +47,4 @@ jobs:
           output-file-path: bench.log
           github-token: ${{ secrets.GITHUB_TOKEN }}
           auto-push: true
-          alert-threshold: '200%'
-          comment-on-alert: true
           fail-on-alert: true
-          summary-always: true
-          alert-comment-cc-users: '@pulsejet'
