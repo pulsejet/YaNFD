@@ -1,4 +1,4 @@
-name: Go Example
+name: Benchmark
 on:
   push:
     branches:
@@ -13,7 +13,6 @@ permissions:
 
 jobs:
   benchmark:
-    name: Run Go benchmark example
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,7 +21,7 @@ jobs:
           go-version: stable
 
       - name: Run benchmark
-        run: go test ./... -bench ^Benchmark | tee bench.log
+        run: go test ./... -bench ^Benchmark -benchtime=150000x | tee bench.log
 
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1
