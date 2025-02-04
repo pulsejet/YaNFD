@@ -33,6 +33,7 @@ jobs:
           output-file-path: bench.log
           alert-threshold: '200%'
           comment-on-alert: true
+          comment-always: true
           fail-on-alert: true
           summary-always: true
           alert-comment-cc-users: '@pulsejet'
