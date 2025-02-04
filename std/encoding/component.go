@@ -2,7 +2,6 @@ package encoding
 
 import (
 	"bytes"
-	"hash"
 	"io"
 	"strconv"
 	"strings"
@@ -155,8 +154,7 @@ func (c Component) NumberVal() uint64 {
 
 // Hash returns the hash of the component
 func (c Component) Hash() uint64 {
-	h := hashPool.Get().(hash.Hash64)
-	defer hashPool.Put(h)
+	h := xxhash.New()
 	h.Reset()
 	h.Write(c.Bytes())
 	return h.Sum64()
